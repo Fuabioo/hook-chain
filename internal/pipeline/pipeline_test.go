@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/Fuabioo/hook-chain/internal/audit"
@@ -597,6 +598,9 @@ func TestAuditRecording(t *testing.T) {
 	if entry.ToolName != "Bash" {
 		t.Errorf("ToolName = %q, want Bash", entry.ToolName)
 	}
+	if entry.ToolDetail != "ls" {
+		t.Errorf("ToolDetail = %q, want %q", entry.ToolDetail, "ls")
+	}
 	if entry.ChainLen != 2 {
 		t.Errorf("ChainLen = %d, want 2", entry.ChainLen)
 	}
@@ -672,5 +676,58 @@ func TestAuditErrorDoesNotBlockPipeline(t *testing.T) {
 	// Verify RecordChain was still called (the error was returned but not fatal).
 	if len(a.entries) != 1 {
 		t.Errorf("audit entries = %d, want 1 (RecordChain should still be called)", len(a.entries))
+	}
+}
+
+func TestExtractToolDetail_BashCommand(t *testing.T) {
+	inp := makeInput(`{"command":"ls -la /tmp"}`)
+	got := extractToolDetail(inp)
+	if got != "ls -la /tmp" {
+		t.Errorf("extractToolDetail = %q, want %q", got, "ls -la /tmp")
+	}
+}
+
+func TestExtractToolDetail_NonBashTool(t *testing.T) {
+	raw := []byte(`{"hook_event_name":"PreToolUse","tool_name":"Read","tool_input":{"file_path":"/etc/hosts"}}`)
+	var inp hook.Input
+	if err := json.Unmarshal(raw, &inp); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	got := extractToolDetail(&inp)
+	if got != "" {
+		t.Errorf("extractToolDetail = %q, want empty for non-Bash tool", got)
+	}
+}
+
+func TestExtractToolDetail_Truncation(t *testing.T) {
+	longCmd := strings.Repeat("x", 300)
+	inp := makeInput(`{"command":"` + longCmd + `"}`)
+	got := extractToolDetail(inp)
+	if len(got) != 256 {
+		t.Errorf("len(extractToolDetail) = %d, want 256", len(got))
+	}
+}
+
+func TestExtractToolDetail_EmptyToolInput(t *testing.T) {
+	raw := []byte(`{"hook_event_name":"PreToolUse","tool_name":"Bash"}`)
+	var inp hook.Input
+	if err := json.Unmarshal(raw, &inp); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	got := extractToolDetail(&inp)
+	if got != "" {
+		t.Errorf("extractToolDetail = %q, want empty for nil tool_input", got)
+	}
+}
+
+func TestExtractToolDetail_InvalidJSON(t *testing.T) {
+	raw := []byte(`{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":"not-json-object"}`)
+	var inp hook.Input
+	if err := json.Unmarshal(raw, &inp); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	got := extractToolDetail(&inp)
+	if got != "" {
+		t.Errorf("extractToolDetail = %q, want empty for invalid JSON", got)
 	}
 }

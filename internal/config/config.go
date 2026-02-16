@@ -18,8 +18,9 @@ type Config struct {
 
 // AuditConfig controls the audit logging subsystem.
 type AuditConfig struct {
-	Enabled bool   `yaml:"enabled"`
-	DBPath  string `yaml:"db_path,omitempty"`
+	Disabled  bool   `yaml:"disabled"` // default: false (audit enabled)
+	DBPath    string `yaml:"db_path,omitempty"`
+	Retention string `yaml:"retention,omitempty"` // e.g. "7d", "30d"
 }
 
 // ChainEntry maps an event+tool pattern to a sequence of hooks.

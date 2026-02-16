@@ -9,7 +9,9 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -103,11 +105,12 @@ func runRoot(cmd *cobra.Command, _ []string) error {
 	}
 
 	// Setup auditor (fail-open: errors logged, never block pipeline).
-	// Audit is enabled by default. Disable with HOOK_CHAIN_AUDIT=0 or audit.enabled: false in config.
+	// Audit is enabled by default. Disable with HOOK_CHAIN_AUDIT=0 or audit.disabled: true in config.
 	var auditor audit.Auditor
-	auditDisabled := os.Getenv("HOOK_CHAIN_AUDIT") == "0" || (cfg.Audit != nil && !cfg.Audit.Enabled)
+	var sqliteAuditor *audit.SQLiteAuditor
+	var dbPath string
+	auditDisabled := os.Getenv("HOOK_CHAIN_AUDIT") == "0" || (cfg.Audit != nil && cfg.Audit.Disabled)
 	if !auditDisabled {
-		dbPath := ""
 		if cfg.Audit != nil && cfg.Audit.DBPath != "" {
 			dbPath = cfg.Audit.DBPath
 		} else {
@@ -117,6 +120,7 @@ func runRoot(cmd *cobra.Command, _ []string) error {
 		if err != nil {
 			logger.Warn("failed to open audit db, continuing without audit", "err", err)
 		} else {
+			sqliteAuditor = a
 			auditor = a
 			defer a.Close()
 		}
@@ -146,10 +150,34 @@ func runRoot(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
+	// Auto-rotate audit entries after pipeline completes.
+	if sqliteAuditor != nil {
+		rotCfg := audit.RotationConfig{
+			Retention:   resolveRetention(cfg, logger),
+			ArchiveDir:  filepath.Join(filepath.Dir(dbPath), "archives"),
+			ThrottleDir: filepath.Join(filepath.Dir(dbPath), "archives"),
+		}
+		audit.MaybeRotate(sqliteAuditor.DB(), rotCfg, logger)
+	}
+
 	if result.ExitCode != 0 {
 		return &exitError{code: result.ExitCode}
 	}
 	return nil
+}
+
+// resolveRetention returns the audit retention duration from config, defaulting to 7 days.
+func resolveRetention(cfg config.Config, logger *slog.Logger) time.Duration {
+	if cfg.Audit == nil || cfg.Audit.Retention == "" {
+		return 7 * 24 * time.Hour
+	}
+	d, err := parseDuration(cfg.Audit.Retention)
+	if err != nil {
+		logger.Warn("invalid audit retention config, using default 7d",
+			"value", cfg.Audit.Retention, "err", err)
+		return 7 * 24 * time.Hour
+	}
+	return d
 }
 
 func newVersionCmd() *cobra.Command {

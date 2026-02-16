@@ -13,7 +13,7 @@ func ListChains(db *sql.DB, limit, offset int, filterEvent, filterOutcome string
 		return nil, fmt.Errorf("audit: ListChains called with nil db")
 	}
 
-	query := "SELECT id, timestamp, event_name, tool_name, chain_len, outcome, reason, duration_ms, session_id FROM chain_executions WHERE 1=1"
+	query := "SELECT id, timestamp, event_name, tool_name, tool_detail, chain_len, outcome, reason, duration_ms, session_id FROM chain_executions WHERE 1=1"
 	var args []any
 
 	if filterEvent != "" {
@@ -30,10 +30,10 @@ func ListChains(db *sql.DB, limit, offset int, filterEvent, filterOutcome string
 	if limit > 0 {
 		query += " LIMIT ?"
 		args = append(args, limit)
-	}
-	if offset > 0 {
-		query += " OFFSET ?"
-		args = append(args, offset)
+		if offset > 0 {
+			query += " OFFSET ?"
+			args = append(args, offset)
+		}
 	}
 
 	rows, err := db.Query(query, args...)
@@ -46,7 +46,7 @@ func ListChains(db *sql.DB, limit, offset int, filterEvent, filterOutcome string
 	for rows.Next() {
 		var c ChainExecution
 		var tsStr string
-		if err := rows.Scan(&c.ID, &tsStr, &c.EventName, &c.ToolName, &c.ChainLen, &c.Outcome, &c.Reason, &c.DurationMs, &c.SessionID); err != nil {
+		if err := rows.Scan(&c.ID, &tsStr, &c.EventName, &c.ToolName, &c.ToolDetail, &c.ChainLen, &c.Outcome, &c.Reason, &c.DurationMs, &c.SessionID); err != nil {
 			return nil, fmt.Errorf("audit: scan chain row: %w", err)
 		}
 		ts, err := time.Parse("2006-01-02T15:04:05.000", tsStr)
@@ -72,9 +72,9 @@ func GetChain(db *sql.DB, id int64) (*ChainExecution, error) {
 	var c ChainExecution
 	var tsStr string
 	err := db.QueryRow(
-		"SELECT id, timestamp, event_name, tool_name, chain_len, outcome, reason, duration_ms, session_id FROM chain_executions WHERE id = ?",
+		"SELECT id, timestamp, event_name, tool_name, tool_detail, chain_len, outcome, reason, duration_ms, session_id FROM chain_executions WHERE id = ?",
 		id,
-	).Scan(&c.ID, &tsStr, &c.EventName, &c.ToolName, &c.ChainLen, &c.Outcome, &c.Reason, &c.DurationMs, &c.SessionID)
+	).Scan(&c.ID, &tsStr, &c.EventName, &c.ToolName, &c.ToolDetail, &c.ChainLen, &c.Outcome, &c.Reason, &c.DurationMs, &c.SessionID)
 	if err != nil {
 		return nil, fmt.Errorf("audit: get chain %d: %w", id, err)
 	}
@@ -116,11 +116,18 @@ func Tail(db *sql.DB, n int) ([]ChainExecution, error) {
 // Prune deletes chain executions (and their hook results) older than the given duration.
 // Returns the number of chain executions deleted.
 func Prune(db *sql.DB, olderThan time.Duration) (int64, error) {
+	cutoff := time.Now().UTC().Add(-olderThan)
+	return PruneBefore(db, cutoff)
+}
+
+// PruneBefore deletes chain executions (and their hook results) with timestamps before the given cutoff.
+// Returns the number of chain executions deleted.
+func PruneBefore(db *sql.DB, cutoff time.Time) (int64, error) {
 	if db == nil {
-		return 0, fmt.Errorf("audit: Prune called with nil db")
+		return 0, fmt.Errorf("audit: PruneBefore called with nil db")
 	}
 
-	cutoff := time.Now().UTC().Add(-olderThan).Format("2006-01-02T15:04:05.000")
+	cutoffStr := cutoff.Format("2006-01-02T15:04:05.000")
 
 	tx, err := db.Begin()
 	if err != nil {
@@ -130,16 +137,15 @@ func Prune(db *sql.DB, olderThan time.Duration) (int64, error) {
 		_ = tx.Rollback()
 	}()
 
-	// Delete hook results for old chains first (foreign key reference).
 	_, err = tx.Exec(
 		"DELETE FROM hook_results WHERE chain_id IN (SELECT id FROM chain_executions WHERE timestamp < ?)",
-		cutoff,
+		cutoffStr,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("audit: prune hook results: %w", err)
 	}
 
-	result, err := tx.Exec("DELETE FROM chain_executions WHERE timestamp < ?", cutoff)
+	result, err := tx.Exec("DELETE FROM chain_executions WHERE timestamp < ?", cutoffStr)
 	if err != nil {
 		return 0, fmt.Errorf("audit: prune chain executions: %w", err)
 	}

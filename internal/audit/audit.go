@@ -33,6 +33,7 @@ type ChainExecution struct {
 	Timestamp  time.Time
 	EventName  string
 	ToolName   string
+	ToolDetail string // e.g. bash command for Bash tool
 	ChainLen   int
 	Outcome    string // allow|deny|ask|error
 	Reason     string

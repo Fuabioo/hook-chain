@@ -94,7 +94,7 @@ func Open(dbPath string) (*SQLiteAuditor, error) {
 		return nil, fmt.Errorf("audit: set busy_timeout: %w", err)
 	}
 
-	// Run schema migration.
+	// Run base schema (CREATE IF NOT EXISTS).
 	if _, err := db.Exec(schema); err != nil {
 		closeErr := db.Close()
 		if closeErr != nil {
@@ -103,7 +103,65 @@ func Open(dbPath string) (*SQLiteAuditor, error) {
 		return nil, fmt.Errorf("audit: create schema: %w", err)
 	}
 
+	// Run migrations.
+	if err := migrate(db); err != nil {
+		closeErr := db.Close()
+		if closeErr != nil {
+			return nil, fmt.Errorf("audit: migrate: %w (also failed to close: %v)", err, closeErr)
+		}
+		return nil, fmt.Errorf("audit: migrate: %w", err)
+	}
+
 	return &SQLiteAuditor{db: db}, nil
+}
+
+// migrate applies incremental schema migrations using PRAGMA user_version.
+func migrate(db *sql.DB) error {
+	var version int
+	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+		return fmt.Errorf("read user_version: %w", err)
+	}
+
+	if version == 0 {
+		exists, err := columnExists(db, "chain_executions", "tool_detail")
+		if err != nil {
+			return fmt.Errorf("check tool_detail column: %w", err)
+		}
+		if !exists {
+			if _, err := db.Exec("ALTER TABLE chain_executions ADD COLUMN tool_detail TEXT NOT NULL DEFAULT ''"); err != nil {
+				return fmt.Errorf("add tool_detail column: %w", err)
+			}
+		}
+		if _, err := db.Exec("PRAGMA user_version = 1"); err != nil {
+			return fmt.Errorf("set user_version to 1: %w", err)
+		}
+	}
+
+	// version >= 1: schema is current, nothing to do.
+	return nil
+}
+
+// columnExists checks whether a column exists in the given table.
+func columnExists(db *sql.DB, table, column string) (bool, error) {
+	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull int
+		var dfltValue *string
+		var pk int
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk); err != nil {
+			return false, err
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 // DB returns the underlying *sql.DB for use with query helpers.
@@ -137,11 +195,12 @@ func (a *SQLiteAuditor) RecordChain(entry ChainExecution) error {
 	}
 
 	result, err := tx.Exec(
-		`INSERT INTO chain_executions (timestamp, event_name, tool_name, chain_len, outcome, reason, duration_ms, session_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO chain_executions (timestamp, event_name, tool_name, tool_detail, chain_len, outcome, reason, duration_ms, session_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		ts.Format("2006-01-02T15:04:05.000"),
 		entry.EventName,
 		entry.ToolName,
+		entry.ToolDetail,
 		entry.ChainLen,
 		entry.Outcome,
 		entry.Reason,

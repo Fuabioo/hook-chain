@@ -27,6 +27,7 @@ func sampleChain(eventName, outcome string, ts time.Time, hooks []HookResult) Ch
 		Timestamp:  ts,
 		EventName:  eventName,
 		ToolName:   "Bash",
+		ToolDetail: "ls -la",
 		ChainLen:   len(hooks),
 		Outcome:    outcome,
 		Reason:     "test reason",
@@ -84,6 +85,28 @@ func TestOpenCreateDB(t *testing.T) {
 	}
 	if count != 0 {
 		t.Errorf("expected 0 rows in hook_results, got %d", count)
+	}
+}
+
+func TestSchemaMigration(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "migration-test.db")
+	a, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open(%q): %v", dbPath, err)
+	}
+	defer func() {
+		if err := a.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	}()
+
+	// Verify tool_detail column exists.
+	exists, err := columnExists(a.DB(), "chain_executions", "tool_detail")
+	if err != nil {
+		t.Fatalf("columnExists: %v", err)
+	}
+	if !exists {
+		t.Error("tool_detail column should exist after migration")
 	}
 }
 
@@ -460,5 +483,130 @@ func TestStderrTruncationOnRecord(t *testing.T) {
 	}
 	if len(got.Hooks[0].Stderr) > maxStderrLen {
 		t.Errorf("stderr length = %d, want <= %d", len(got.Hooks[0].Stderr), maxStderrLen)
+	}
+}
+
+func TestToolDetailRoundTrip(t *testing.T) {
+	a := openTestDB(t)
+	ts := time.Date(2025, 6, 15, 10, 30, 0, 0, time.UTC)
+	entry := sampleChain("PreToolUse", OutcomeAllow, ts, nil)
+	entry.ToolDetail = "echo hello world"
+
+	if err := a.RecordChain(entry); err != nil {
+		t.Fatalf("RecordChain: %v", err)
+	}
+
+	got, err := GetChain(a.DB(), 1)
+	if err != nil {
+		t.Fatalf("GetChain: %v", err)
+	}
+	if got.ToolDetail != "echo hello world" {
+		t.Errorf("ToolDetail = %q, want %q", got.ToolDetail, "echo hello world")
+	}
+
+	// Also verify via ListChains
+	chains, err := ListChains(a.DB(), 10, 0, "", "")
+	if err != nil {
+		t.Fatalf("ListChains: %v", err)
+	}
+	if len(chains) != 1 {
+		t.Fatalf("len(chains) = %d, want 1", len(chains))
+	}
+	if chains[0].ToolDetail != "echo hello world" {
+		t.Errorf("ListChains ToolDetail = %q, want %q", chains[0].ToolDetail, "echo hello world")
+	}
+}
+
+func TestMigrationIdempotent(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "migrate-test.db")
+	// Open twice -- second Open should not fail
+	a1, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("first Open: %v", err)
+	}
+	if err := a1.Close(); err != nil {
+		t.Fatalf("first Close: %v", err)
+	}
+
+	a2, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("second Open: %v", err)
+	}
+	defer func() {
+		if err := a2.Close(); err != nil {
+			t.Errorf("second Close: %v", err)
+		}
+	}()
+
+	// Verify column exists
+	exists, err := columnExists(a2.DB(), "chain_executions", "tool_detail")
+	if err != nil {
+		t.Fatalf("columnExists: %v", err)
+	}
+	if !exists {
+		t.Error("tool_detail column should exist after migration")
+	}
+}
+
+func TestPruneBefore(t *testing.T) {
+	a := openTestDB(t)
+
+	now := time.Now().UTC()
+	oldTS := now.Add(-48 * time.Hour)
+	newTS := now.Add(-1 * time.Hour)
+
+	oldEntry := sampleChain("PreToolUse", OutcomeAllow, oldTS, sampleHooks())
+	newEntry := sampleChain("PreToolUse", OutcomeDeny, newTS, sampleHooks())
+
+	if err := a.RecordChain(oldEntry); err != nil {
+		t.Fatalf("RecordChain (old): %v", err)
+	}
+	if err := a.RecordChain(newEntry); err != nil {
+		t.Fatalf("RecordChain (new): %v", err)
+	}
+
+	// Use explicit cutoff at 24h ago.
+	cutoff := now.Add(-24 * time.Hour)
+	count, err := PruneBefore(a.DB(), cutoff)
+	if err != nil {
+		t.Fatalf("PruneBefore: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("pruned %d chains, want 1", count)
+	}
+
+	remaining, err := ListChains(a.DB(), 100, 0, "", "")
+	if err != nil {
+		t.Fatalf("ListChains: %v", err)
+	}
+	if len(remaining) != 1 {
+		t.Fatalf("expected 1 remaining chain, got %d", len(remaining))
+	}
+	if remaining[0].Outcome != OutcomeDeny {
+		t.Errorf("remaining outcome = %q, want deny", remaining[0].Outcome)
+	}
+}
+
+func TestListChainsOffsetWithoutLimit(t *testing.T) {
+	a := openTestDB(t)
+
+	baseTS := time.Date(2025, 6, 15, 10, 0, 0, 0, time.UTC)
+	for i := range 5 {
+		entry := sampleChain("PreToolUse", OutcomeAllow, baseTS.Add(time.Duration(i)*time.Minute), nil)
+		entry.DurationMs = int64(i + 1)
+		if err := a.RecordChain(entry); err != nil {
+			t.Fatalf("RecordChain: %v", err)
+		}
+	}
+
+	// limit=0 with offset=2 should return ALL rows (limit=0 means no limit,
+	// and offset is only valid with a limit).
+	chains, err := ListChains(a.DB(), 0, 2, "", "")
+	if err != nil {
+		t.Fatalf("ListChains: %v", err)
+	}
+	// With limit=0, offset is ignored, so all 5 entries are returned.
+	if len(chains) != 5 {
+		t.Errorf("got %d chains, want 5 (limit=0 means all)", len(chains))
 	}
 }

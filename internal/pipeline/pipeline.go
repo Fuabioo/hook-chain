@@ -286,6 +286,28 @@ func Run(ctx context.Context, input *hook.Input, hooks []config.HookEntry, r run
 	return Result{ExitCode: 0, Output: data}
 }
 
+// extractToolDetail returns the bash command from tool_input when tool_name is "Bash".
+// Returns empty string for all other tools or on any error (fail-silent).
+func extractToolDetail(input *hook.Input) string {
+	if input.ToolName != "Bash" {
+		return ""
+	}
+	if len(input.ToolInput) == 0 {
+		return ""
+	}
+	var ti struct {
+		Command string `json:"command"`
+	}
+	if err := json.Unmarshal(input.ToolInput, &ti); err != nil {
+		return ""
+	}
+	cmd := ti.Command
+	if len(cmd) > 256 {
+		cmd = cmd[:256]
+	}
+	return cmd
+}
+
 // recordAudit sends a chain execution record to the auditor. Errors are logged
 // but never affect the pipeline return value.
 func recordAudit(auditor audit.Auditor, input *hook.Input, chainLen int, outcome string, reason string, chainStart time.Time, hookResults []audit.HookResult, logger *slog.Logger) {
@@ -295,6 +317,7 @@ func recordAudit(auditor audit.Auditor, input *hook.Input, chainLen int, outcome
 	entry := audit.ChainExecution{
 		EventName:  input.HookEventName,
 		ToolName:   input.ToolName,
+		ToolDetail: extractToolDetail(input),
 		ChainLen:   chainLen,
 		Outcome:    outcome,
 		Reason:     reason,

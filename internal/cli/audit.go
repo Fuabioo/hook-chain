@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -29,6 +30,10 @@ func openAuditDBReadOnly(cmd *cobra.Command) (*sql.DB, error) {
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("open audit db %q: %w", dbPath, err)
+	}
+	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("set busy_timeout on audit db %q: %w", dbPath, err)
 	}
 	if err := db.Ping(); err != nil {
 		db.Close()
@@ -64,6 +69,7 @@ func newAuditCmd() *cobra.Command {
 		newAuditPruneCmd(),
 		newAuditStatsCmd(),
 		newAuditDBPathCmd(),
+		newAuditArchivesCmd(),
 	)
 	return cmd
 }
@@ -163,6 +169,9 @@ func runAuditShow(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  Timestamp:  %s\n", chain.Timestamp.Format(time.RFC3339))
 	fmt.Printf("  Event:      %s\n", chain.EventName)
 	fmt.Printf("  Tool:       %s\n", chain.ToolName)
+	if chain.ToolDetail != "" {
+		fmt.Printf("  Detail:     %s\n", chain.ToolDetail)
+	}
 	fmt.Printf("  Chain Len:  %d\n", chain.ChainLen)
 	fmt.Printf("  Outcome:    %s\n", chain.Outcome)
 	fmt.Printf("  Reason:     %s\n", chain.Reason)
@@ -326,16 +335,88 @@ func newAuditDBPathCmd() *cobra.Command {
 	}
 }
 
+func newAuditArchivesCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "archives",
+		Short: "List audit archive files",
+		RunE:  runAuditArchives,
+	}
+	cmd.Flags().Bool("json", false, "output as JSON")
+	return cmd
+}
+
+func runAuditArchives(cmd *cobra.Command, _ []string) error {
+	dbPath, err := cmd.Flags().GetString("db")
+	if err != nil || dbPath == "" {
+		dbPath = audit.DefaultDBPath()
+	}
+	archiveDir := filepath.Join(filepath.Dir(dbPath), "archives")
+
+	asJSON, err := cmd.Flags().GetBool("json")
+	if err != nil {
+		return fmt.Errorf("invalid --json: %w", err)
+	}
+
+	archives, err := audit.ListArchives(archiveDir)
+	if err != nil {
+		return fmt.Errorf("list archives: %w", err)
+	}
+
+	if len(archives) == 0 {
+		fmt.Println("No archives found.")
+		return nil
+	}
+
+	if asJSON {
+		return printJSON(archives)
+	}
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "NAME\tSIZE\tDATE")
+	for _, a := range archives {
+		fmt.Fprintf(w, "%s\t%s\t%s\n",
+			a.Name,
+			formatSize(a.Size),
+			a.ModTime.Format(time.RFC3339),
+		)
+	}
+	if err := w.Flush(); err != nil {
+		return fmt.Errorf("flush tabwriter: %w", err)
+	}
+	return nil
+}
+
+// formatSize returns a human-readable file size.
+func formatSize(bytes int64) string {
+	const (
+		kb = 1024
+		mb = kb * 1024
+	)
+	switch {
+	case bytes >= mb:
+		return fmt.Sprintf("%.1fMB", float64(bytes)/float64(mb))
+	case bytes >= kb:
+		return fmt.Sprintf("%.1fKB", float64(bytes)/float64(kb))
+	default:
+		return fmt.Sprintf("%dB", bytes)
+	}
+}
+
 // printChainTable outputs chain executions in a tabwriter table.
 func printChainTable(chains []audit.ChainExecution) {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tTIMESTAMP\tEVENT\tTOOL\tHOOKS\tOUTCOME\tDURATION")
+	fmt.Fprintln(w, "ID\tTIMESTAMP\tEVENT\tTOOL\tDETAIL\tHOOKS\tOUTCOME\tDURATION")
 	for _, c := range chains {
-		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%d\t%s\t%dms\n",
+		detail := c.ToolDetail
+		if len(detail) > 40 {
+			detail = detail[:37] + "..."
+		}
+		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%d\t%s\t%dms\n",
 			c.ID,
 			c.Timestamp.Format(time.RFC3339),
 			c.EventName,
 			c.ToolName,
+			detail,
 			c.ChainLen,
 			c.Outcome,
 			c.DurationMs,
