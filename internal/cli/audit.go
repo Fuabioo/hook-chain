@@ -17,13 +17,19 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// openAuditDBReadOnly opens an existing audit DB for read-only queries.
-// Returns a clear error if the DB doesn't exist.
-func openAuditDBReadOnly(cmd *cobra.Command) (*sql.DB, error) {
+// resolveDBPath returns the audit database path from the --db flag or the default.
+func resolveDBPath(cmd *cobra.Command) string {
 	dbPath, err := cmd.Flags().GetString("db")
 	if err != nil || dbPath == "" {
 		dbPath = audit.DefaultDBPath()
 	}
+	return dbPath
+}
+
+// openAuditDBReadOnly opens an existing audit DB for read-only queries.
+// Returns a clear error if the DB doesn't exist.
+func openAuditDBReadOnly(cmd *cobra.Command) (*sql.DB, error) {
+	dbPath := resolveDBPath(cmd)
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		return nil, fmt.Errorf("audit database not found at %s (is auditing enabled?)", dbPath)
 	}
@@ -45,10 +51,7 @@ func openAuditDBReadOnly(cmd *cobra.Command) (*sql.DB, error) {
 // openAuditDBWrite opens (or creates) the audit DB for write operations.
 // It returns the underlying *sql.DB, a cleanup function, and any error.
 func openAuditDBWrite(cmd *cobra.Command) (*sql.DB, func(), error) {
-	dbPath, err := cmd.Flags().GetString("db")
-	if err != nil || dbPath == "" {
-		dbPath = audit.DefaultDBPath()
-	}
+	dbPath := resolveDBPath(cmd)
 	a, err := audit.Open(dbPath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("open audit db: %w", err)
@@ -124,7 +127,7 @@ func runAuditList(cmd *cobra.Command, _ []string) error {
 	if asJSON {
 		return printJSON(chains)
 	}
-	printChainTable(chains)
+	printChainTable(chains, resolveDBPath(cmd))
 	return nil
 }
 
@@ -233,7 +236,7 @@ func runAuditTail(cmd *cobra.Command, _ []string) error {
 	if asJSON {
 		return printJSON(chains)
 	}
-	printChainTable(chains)
+	printChainTable(chains, resolveDBPath(cmd))
 	return nil
 }
 
@@ -346,10 +349,7 @@ func newAuditArchivesCmd() *cobra.Command {
 }
 
 func runAuditArchives(cmd *cobra.Command, _ []string) error {
-	dbPath, err := cmd.Flags().GetString("db")
-	if err != nil || dbPath == "" {
-		dbPath = audit.DefaultDBPath()
-	}
+	dbPath := resolveDBPath(cmd)
 	archiveDir := filepath.Join(filepath.Dir(dbPath), "archives")
 
 	asJSON, err := cmd.Flags().GetBool("json")
@@ -403,15 +403,27 @@ func formatSize(bytes int64) string {
 }
 
 // printChainTable outputs chain executions in a tabwriter table.
-func printChainTable(chains []audit.ChainExecution) {
+// If any rows have a non-allow outcome with a reason, a hint is printed
+// to stderr showing how to query full untruncated reasons via sqlite3.
+func printChainTable(chains []audit.ChainExecution, dbPath string) {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tTIMESTAMP\tEVENT\tTOOL\tDETAIL\tHOOKS\tOUTCOME\tDURATION")
+	fmt.Fprintln(w, "ID\tTIMESTAMP\tEVENT\tTOOL\tDETAIL\tHOOKS\tOUTCOME\tREASON\tDURATION")
+
+	hasReasonedNonAllow := false
 	for _, c := range chains {
+		if c.Outcome != audit.OutcomeAllow && c.Reason != "" {
+			hasReasonedNonAllow = true
+		}
+
 		detail := c.ToolDetail
 		if len(detail) > 40 {
 			detail = detail[:37] + "..."
 		}
-		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%d\t%s\t%dms\n",
+		reason := c.Reason
+		if len(reason) > 40 {
+			reason = reason[:37] + "..."
+		}
+		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%dms\n",
 			c.ID,
 			c.Timestamp.Format(time.RFC3339),
 			c.EventName,
@@ -419,11 +431,19 @@ func printChainTable(chains []audit.ChainExecution) {
 			detail,
 			c.ChainLen,
 			c.Outcome,
+			reason,
 			c.DurationMs,
 		)
 	}
 	if err := w.Flush(); err != nil {
 		fmt.Fprintf(os.Stderr, "hook-chain: flush table: %v\n", err)
+	}
+
+	if hasReasonedNonAllow {
+		fmt.Fprintf(os.Stderr,
+			"\nTip: to see full denial reasons, run:\n  sqlite3 %s \"SELECT id, reason FROM chain_executions WHERE outcome != 'allow' ORDER BY id DESC LIMIT %d\"\n",
+			dbPath, len(chains),
+		)
 	}
 }
 
@@ -446,8 +466,7 @@ func parseDuration(s string) (time.Duration, error) {
 	}
 
 	// Handle "Nd" (days) format.
-	if strings.HasSuffix(s, "d") {
-		numStr := strings.TrimSuffix(s, "d")
+	if numStr, ok := strings.CutSuffix(s, "d"); ok {
 		n, err := strconv.Atoi(numStr)
 		if err != nil {
 			return 0, fmt.Errorf("invalid days %q: %w", numStr, err)
@@ -456,8 +475,7 @@ func parseDuration(s string) (time.Duration, error) {
 	}
 
 	// Handle "Nh" (hours) format.
-	if strings.HasSuffix(s, "h") {
-		numStr := strings.TrimSuffix(s, "h")
+	if numStr, ok := strings.CutSuffix(s, "h"); ok {
 		n, err := strconv.Atoi(numStr)
 		if err != nil {
 			// Fall through to time.ParseDuration which handles "1h30m" etc.
