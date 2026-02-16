@@ -688,14 +688,15 @@ func TestExtractToolDetail_BashCommand(t *testing.T) {
 }
 
 func TestExtractToolDetail_NonBashTool(t *testing.T) {
-	raw := []byte(`{"hook_event_name":"PreToolUse","tool_name":"Read","tool_input":{"file_path":"/etc/hosts"}}`)
+	// Glob tool is not supported — should return empty.
+	raw := []byte(`{"hook_event_name":"PreToolUse","tool_name":"Glob","tool_input":{"pattern":"**/*.go"}}`)
 	var inp hook.Input
 	if err := json.Unmarshal(raw, &inp); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
 	got := extractToolDetail(&inp)
 	if got != "" {
-		t.Errorf("extractToolDetail = %q, want empty for non-Bash tool", got)
+		t.Errorf("extractToolDetail = %q, want empty for unsupported tool", got)
 	}
 }
 
@@ -729,5 +730,56 @@ func TestExtractToolDetail_InvalidJSON(t *testing.T) {
 	got := extractToolDetail(&inp)
 	if got != "" {
 		t.Errorf("extractToolDetail = %q, want empty for invalid JSON", got)
+	}
+}
+
+func TestExtractToolDetail_ReadTool(t *testing.T) {
+	raw := []byte(`{"hook_event_name":"PreToolUse","tool_name":"Read","tool_input":{"file_path":"/etc/hosts"}}`)
+	var inp hook.Input
+	if err := json.Unmarshal(raw, &inp); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	got := extractToolDetail(&inp)
+	if got != "/etc/hosts" {
+		t.Errorf("extractToolDetail = %q, want %q", got, "/etc/hosts")
+	}
+}
+
+func TestExtractToolDetail_WriteTool(t *testing.T) {
+	raw := []byte(`{"hook_event_name":"PreToolUse","tool_name":"Write","tool_input":{"file_path":"/tmp/test.go","content":"line1\nline2\nline3"}}`)
+	var inp hook.Input
+	if err := json.Unmarshal(raw, &inp); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	got := extractToolDetail(&inp)
+	want := "/tmp/test.go (+3 lines)"
+	if got != want {
+		t.Errorf("extractToolDetail = %q, want %q", got, want)
+	}
+}
+
+func TestExtractToolDetail_WriteToolEmptyContent(t *testing.T) {
+	raw := []byte(`{"hook_event_name":"PreToolUse","tool_name":"Write","tool_input":{"file_path":"/tmp/empty.txt","content":""}}`)
+	var inp hook.Input
+	if err := json.Unmarshal(raw, &inp); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	got := extractToolDetail(&inp)
+	want := "/tmp/empty.txt (+0 lines)"
+	if got != want {
+		t.Errorf("extractToolDetail = %q, want %q", got, want)
+	}
+}
+
+func TestExtractToolDetail_EditTool(t *testing.T) {
+	raw := []byte(`{"hook_event_name":"PreToolUse","tool_name":"Edit","tool_input":{"file_path":"/tmp/main.go","old_string":"func old() {\n}","new_string":"func new() {\n\treturn nil\n}"}}`)
+	var inp hook.Input
+	if err := json.Unmarshal(raw, &inp); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	got := extractToolDetail(&inp)
+	want := "/tmp/main.go (-2/+3 lines)"
+	if got != want {
+		t.Errorf("extractToolDetail = %q, want %q", got, want)
 	}
 }

@@ -286,26 +286,77 @@ func Run(ctx context.Context, input *hook.Input, hooks []config.HookEntry, r run
 	return Result{ExitCode: 0, Output: data}
 }
 
-// extractToolDetail returns the bash command from tool_input when tool_name is "Bash".
-// Returns empty string for all other tools or on any error (fail-silent).
+// extractToolDetail extracts a human-readable summary from tool_input for audit display.
+// Supports Bash (command), Read (file path), Write (file path + line count),
+// and Edit (file path + lines removed/added). Returns empty string for
+// unsupported tools or on any error (fail-silent).
 func extractToolDetail(input *hook.Input) string {
-	if input.ToolName != "Bash" {
-		return ""
-	}
 	if len(input.ToolInput) == 0 {
 		return ""
 	}
-	var ti struct {
-		Command string `json:"command"`
-	}
-	if err := json.Unmarshal(input.ToolInput, &ti); err != nil {
+
+	var detail string
+
+	switch input.ToolName {
+	case "Bash":
+		var ti struct {
+			Command string `json:"command"`
+		}
+		if err := json.Unmarshal(input.ToolInput, &ti); err != nil {
+			return ""
+		}
+		detail = ti.Command
+
+	case "Read":
+		var ti struct {
+			FilePath string `json:"file_path"`
+		}
+		if err := json.Unmarshal(input.ToolInput, &ti); err != nil {
+			return ""
+		}
+		detail = ti.FilePath
+
+	case "Write":
+		var ti struct {
+			FilePath string `json:"file_path"`
+			Content  string `json:"content"`
+		}
+		if err := json.Unmarshal(input.ToolInput, &ti); err != nil {
+			return ""
+		}
+		lines := countLines(ti.Content)
+		detail = fmt.Sprintf("%s (+%d lines)", ti.FilePath, lines)
+
+	case "Edit":
+		var ti struct {
+			FilePath  string `json:"file_path"`
+			OldString string `json:"old_string"`
+			NewString string `json:"new_string"`
+		}
+		if err := json.Unmarshal(input.ToolInput, &ti); err != nil {
+			return ""
+		}
+		oldLines := countLines(ti.OldString)
+		newLines := countLines(ti.NewString)
+		detail = fmt.Sprintf("%s (-%d/+%d lines)", ti.FilePath, oldLines, newLines)
+
+	default:
 		return ""
 	}
-	cmd := ti.Command
-	if len(cmd) > 256 {
-		cmd = cmd[:256]
+
+	if len(detail) > 256 {
+		detail = detail[:256]
 	}
-	return cmd
+	return detail
+}
+
+// countLines returns the number of lines in s. An empty string has 0 lines.
+// A string without newlines has 1 line. Each newline adds a line.
+func countLines(s string) int {
+	if s == "" {
+		return 0
+	}
+	return strings.Count(s, "\n") + 1
 }
 
 // recordAudit sends a chain execution record to the auditor. Errors are logged
