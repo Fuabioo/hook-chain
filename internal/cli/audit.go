@@ -16,16 +16,39 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-func openAuditDB(cmd *cobra.Command) (*sql.DB, error) {
+// openAuditDBReadOnly opens an existing audit DB for read-only queries.
+// Returns a clear error if the DB doesn't exist.
+func openAuditDBReadOnly(cmd *cobra.Command) (*sql.DB, error) {
 	dbPath, err := cmd.Flags().GetString("db")
 	if err != nil || dbPath == "" {
 		dbPath = audit.DefaultDBPath()
+	}
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		return nil, fmt.Errorf("audit database not found at %s (is auditing enabled?)", dbPath)
 	}
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("open audit db %q: %w", dbPath, err)
 	}
+	if err := db.Ping(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("connect audit db %q: %w", dbPath, err)
+	}
 	return db, nil
+}
+
+// openAuditDBWrite opens (or creates) the audit DB for write operations.
+// It returns the underlying *sql.DB, a cleanup function, and any error.
+func openAuditDBWrite(cmd *cobra.Command) (*sql.DB, func(), error) {
+	dbPath, err := cmd.Flags().GetString("db")
+	if err != nil || dbPath == "" {
+		dbPath = audit.DefaultDBPath()
+	}
+	a, err := audit.Open(dbPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open audit db: %w", err)
+	}
+	return a.DB(), func() { a.Close() }, nil
 }
 
 func newAuditCmd() *cobra.Command {
@@ -60,7 +83,7 @@ func newAuditListCmd() *cobra.Command {
 }
 
 func runAuditList(cmd *cobra.Command, _ []string) error {
-	db, err := openAuditDB(cmd)
+	db, err := openAuditDBReadOnly(cmd)
 	if err != nil {
 		return err
 	}
@@ -111,7 +134,7 @@ func newAuditShowCmd() *cobra.Command {
 }
 
 func runAuditShow(cmd *cobra.Command, args []string) error {
-	db, err := openAuditDB(cmd)
+	db, err := openAuditDBReadOnly(cmd)
 	if err != nil {
 		return err
 	}
@@ -178,7 +201,7 @@ func newAuditTailCmd() *cobra.Command {
 }
 
 func runAuditTail(cmd *cobra.Command, _ []string) error {
-	db, err := openAuditDB(cmd)
+	db, err := openAuditDBReadOnly(cmd)
 	if err != nil {
 		return err
 	}
@@ -219,11 +242,11 @@ func newAuditPruneCmd() *cobra.Command {
 }
 
 func runAuditPrune(cmd *cobra.Command, _ []string) error {
-	db, err := openAuditDB(cmd)
+	db, cleanup, err := openAuditDBWrite(cmd)
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer cleanup()
 
 	olderThanStr, err := cmd.Flags().GetString("older-than")
 	if err != nil {
@@ -255,7 +278,7 @@ func newAuditStatsCmd() *cobra.Command {
 }
 
 func runAuditStats(cmd *cobra.Command, _ []string) error {
-	db, err := openAuditDB(cmd)
+	db, err := openAuditDBReadOnly(cmd)
 	if err != nil {
 		return err
 	}
