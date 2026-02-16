@@ -7,3 +7,7 @@ coverage/
 *.dylib
 *.test
 *.out
+
+.workflow/
+.claude/settings.local.json
+.artifacts/
