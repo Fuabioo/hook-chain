@@ -81,6 +81,7 @@ func newAuditListCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List chain executions",
+		Args:  cobra.NoArgs,
 		RunE:  runAuditList,
 	}
 	cmd.Flags().Int("limit", 20, "maximum number of entries")
@@ -205,6 +206,7 @@ func newAuditTailCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "tail",
 		Short: "Show last N chain executions",
+		Args:  cobra.NoArgs,
 		RunE:  runAuditTail,
 	}
 	cmd.Flags().Int("n", 10, "number of entries")
@@ -244,6 +246,7 @@ func newAuditPruneCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "prune",
 		Short: "Delete old audit entries",
+		Args:  cobra.NoArgs,
 		RunE:  runAuditPrune,
 	}
 	cmd.Flags().String("older-than", "", "delete entries older than duration (e.g., 7d, 24h, 30d)")
@@ -283,6 +286,7 @@ func newAuditStatsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "stats",
 		Short: "Show audit statistics",
+		Args:  cobra.NoArgs,
 		RunE:  runAuditStats,
 	}
 	cmd.Flags().Bool("json", false, "output as JSON")
@@ -332,6 +336,7 @@ func newAuditDBPathCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "db-path",
 		Short: "Print the audit database path",
+		Args:  cobra.NoArgs,
 		Run: func(cmd *cobra.Command, args []string) {
 			fmt.Println(audit.DefaultDBPath())
 		},
@@ -342,6 +347,7 @@ func newAuditArchivesCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "archives",
 		Short: "List audit archive files",
+		Args:  cobra.NoArgs,
 		RunE:  runAuditArchives,
 	}
 	cmd.Flags().Bool("json", false, "output as JSON")
