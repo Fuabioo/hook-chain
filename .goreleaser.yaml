@@ -1,0 +1,111 @@
+version: 2
+
+project_name: hook-chain
+
+release:
+  draft: false
+  prerelease: auto
+  mode: replace
+  make_latest: true
+  name_template: "v{{ .Version }}"
+  header: |
+    ## hook-chain {{ .Version }}
+
+    **Sequential Hook Executor** — chain multiple hooks for Claude Code.
+  footer: |
+    ## Installation
+
+    **Homebrew:**
+    ```bash
+    brew tap Fuabioo/tap
+    brew install hook-chain
+    ```
+
+    **Go:**
+    ```bash
+    go install github.com/Fuabioo/hook-chain@latest
+    ```
+
+    ---
+    **Full Changelog**: https://github.com/Fuabioo/hook-chain/compare/{{ .PreviousTag }}...{{ .Tag }}
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - main: .
+    binary: hook-chain
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/Fuabioo/hook-chain/internal/cli.Version={{.Version}}
+      - -X github.com/Fuabioo/hook-chain/internal/cli.Commit={{.ShortCommit}}
+
+archives:
+  - formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+    files:
+      - README.md
+      - LICENSE*
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ .Tag }}-next"
+
+changelog:
+  use: github
+  format: "{{ .SHA }}: {{ .Message }} (@{{ .AuthorUsername }})"
+  sort: asc
+  filters:
+    exclude:
+      - "skip ci"
+      - "skip-ci"
+      - "^docs:"
+      - "^test:"
+  groups:
+    - title: "Features"
+      regexp: "(?i).*(feat|add|implement|create|initial|new).*"
+      order: 0
+    - title: "Bug fixes"
+      regexp: "(?i).*(fix|resolve|correct|patch|bug).*"
+      order: 1
+    - title: "Documentation"
+      regexp: "(?i).*(docs|documentation|readme).*"
+      order: 2
+    - title: "Improvements"
+      regexp: "(?i).*(improve|enhance|optimize|update|upgrade).*"
+      order: 3
+    - title: "Cleanup"
+      regexp: "(?i).*(cleanup|clean|remove|delete|refactor).*"
+      order: 4
+    - title: "Others"
+      order: 999
+
+brews:
+  - repository:
+      owner: Fuabioo
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: "https://github.com/Fuabioo/hook-chain"
+    description: "Sequential Hook Executor — chain multiple hooks for Claude Code"
+    license: "MIT"
+    install: |
+      bin.install "hook-chain"
+    test: |
+      system "#{bin}/hook-chain", "version"
