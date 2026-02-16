@@ -103,9 +103,10 @@ func runRoot(cmd *cobra.Command, _ []string) error {
 	}
 
 	// Setup auditor (fail-open: errors logged, never block pipeline).
+	// Audit is enabled by default. Disable with HOOK_CHAIN_AUDIT=0 or audit.enabled: false in config.
 	var auditor audit.Auditor
-	auditEnabled := os.Getenv("HOOK_CHAIN_AUDIT") == "1" || (cfg.Audit != nil && cfg.Audit.Enabled)
-	if auditEnabled {
+	auditDisabled := os.Getenv("HOOK_CHAIN_AUDIT") == "0" || (cfg.Audit != nil && !cfg.Audit.Enabled)
+	if !auditDisabled {
 		dbPath := ""
 		if cfg.Audit != nil && cfg.Audit.DBPath != "" {
 			dbPath = cfg.Audit.DBPath
