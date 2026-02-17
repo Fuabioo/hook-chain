@@ -80,8 +80,10 @@ func runRoot(cmd *cobra.Command, _ []string) error {
 	// Read all of stdin.
 	data, err := io.ReadAll(os.Stdin)
 	if err != nil {
-		logger.Warn("failed to read stdin", "err", err)
-		return nil // passthrough on stdin failure
+		// Fail closed: if we cannot read input, the security chain cannot run.
+		logger.Error("failed to read stdin", "err", err)
+		writeDenyJSON("hook-chain: failed to read stdin")
+		return &exitError{code: 2}
 	}
 
 	if len(data) == 0 {
@@ -92,8 +94,10 @@ func runRoot(cmd *cobra.Command, _ []string) error {
 	// Parse as hook.Input.
 	var input hook.Input
 	if err := json.Unmarshal(data, &input); err != nil {
-		logger.Warn("failed to parse stdin as JSON", "err", err)
-		return nil // passthrough on parse failure
+		// Fail closed: if we cannot parse input, the security chain cannot run.
+		logger.Error("failed to parse stdin as JSON", "err", err)
+		writeDenyJSON("hook-chain: failed to parse hook input")
+		return &exitError{code: 2}
 	}
 
 	// Load config.
@@ -164,6 +168,25 @@ func runRoot(cmd *cobra.Command, _ []string) error {
 		return &exitError{code: result.ExitCode}
 	}
 	return nil
+}
+
+// writeDenyJSON writes a deny response to stdout in the hook protocol format.
+// Used for early failures (stdin read error, JSON parse error) where the
+// security chain cannot run. Errors are logged but not propagated — the
+// caller should also return exitError{code: 2}.
+func writeDenyJSON(reason string) {
+	out := hook.Output{
+		HookSpecificOutput: hook.HookSpecificOutput{
+			PermissionDecision:       "deny",
+			PermissionDecisionReason: reason,
+		},
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		// Last resort: hardcoded JSON.
+		data = []byte(`{"hookSpecificOutput":{"permissionDecision":"deny","permissionDecisionReason":"hook-chain: internal error"}}`)
+	}
+	os.Stdout.Write(data)
 }
 
 // resolveRetention returns the audit retention duration from config, defaulting to 7 days.
