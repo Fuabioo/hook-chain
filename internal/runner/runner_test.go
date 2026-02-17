@@ -95,28 +95,3 @@ func TestProcessRunnerWithEnv(t *testing.T) {
 		t.Errorf("Stdout = %q, want %q", got, "test_value\n")
 	}
 }
-
-func TestExpandTilde(t *testing.T) {
-	tests := []struct {
-		input string
-		want  string // prefix check only for ~ expansion
-		tilde bool
-	}{
-		{"/usr/bin/foo", "/usr/bin/foo", false},
-		{"~/bin/foo", "", true},
-		{"foo", "foo", false},
-	}
-
-	for _, tt := range tests {
-		got := expandTilde(tt.input)
-		if tt.tilde {
-			if got == tt.input {
-				t.Errorf("expandTilde(%q) = %q, expected tilde to be expanded", tt.input, got)
-			}
-		} else {
-			if got != tt.want {
-				t.Errorf("expandTilde(%q) = %q, want %q", tt.input, got, tt.want)
-			}
-		}
-	}
-}

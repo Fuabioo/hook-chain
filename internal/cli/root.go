@@ -18,6 +18,7 @@ import (
 	"github.com/Fuabioo/hook-chain/internal/audit"
 	"github.com/Fuabioo/hook-chain/internal/config"
 	"github.com/Fuabioo/hook-chain/internal/hook"
+	"github.com/Fuabioo/hook-chain/internal/pathutil"
 	"github.com/Fuabioo/hook-chain/internal/pipeline"
 	"github.com/Fuabioo/hook-chain/internal/runner"
 )
@@ -238,7 +239,7 @@ func runValidate(cmd *cobra.Command, _ []string) error {
 	for i, chain := range cfg.Chains {
 		fmt.Printf("Chain %d: event=%s tools=%v\n", i+1, chain.Event, chain.Tools)
 		for j, h := range chain.Hooks {
-			cmdStr := expandTilde(h.Command)
+			cmdStr := pathutil.ExpandTilde(h.Command)
 			parts := strings.Fields(cmdStr)
 			status := "OK"
 			if len(parts) == 0 {
@@ -264,16 +265,4 @@ func runValidate(cmd *cobra.Command, _ []string) error {
 		return &exitError{code: 1}
 	}
 	return nil
-}
-
-// expandTilde replaces a leading ~ with $HOME.
-func expandTilde(path string) string {
-	if !strings.HasPrefix(path, "~") {
-		return path
-	}
-	home := os.Getenv("HOME")
-	if home == "" {
-		return path
-	}
-	return home + path[1:]
 }

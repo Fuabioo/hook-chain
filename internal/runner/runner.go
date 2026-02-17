@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Fuabioo/hook-chain/internal/config"
+	"github.com/Fuabioo/hook-chain/internal/pathutil"
 )
 
 // Result holds the output from executing a hook process.
@@ -36,7 +37,7 @@ const defaultTimeout = 30 * time.Second
 // Limitation: the command string is split with strings.Fields,
 // so commands containing paths with spaces must use Args instead.
 func (pr ProcessRunner) Run(ctx context.Context, hook config.HookEntry, input []byte) (Result, error) {
-	cmdStr := expandTilde(hook.Command)
+	cmdStr := pathutil.ExpandTilde(hook.Command)
 	parts := strings.Fields(cmdStr)
 	if len(parts) == 0 {
 		return Result{}, fmt.Errorf("runner: empty command for hook %q", hook.Name)
@@ -85,16 +86,4 @@ func (pr ProcessRunner) Run(ctx context.Context, hook config.HookEntry, input []
 		Stdout:   stdout.Bytes(),
 		Stderr:   stderr.String(),
 	}, nil
-}
-
-// expandTilde replaces a leading ~ with the user's home directory.
-func expandTilde(path string) string {
-	if !strings.HasPrefix(path, "~") {
-		return path
-	}
-	home := os.Getenv("HOME")
-	if home == "" {
-		return path
-	}
-	return home + path[1:]
 }
