@@ -163,8 +163,11 @@ func TestEffectiveOnError(t *testing.T) {
 
 func TestLoadMissingFileReturnsEmpty(t *testing.T) {
 	// Point to a nonexistent directory so no config is found.
+	// HOME must also be overridden to prevent the ~/.config fallback
+	// from finding a real config on the developer's machine.
 	t.Setenv("HOOK_CHAIN_CONFIG", "")
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
 
 	cfg, err := Load()
 	if err != nil {
