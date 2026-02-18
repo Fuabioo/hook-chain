@@ -338,7 +338,7 @@ func newAuditDBPathCmd() *cobra.Command {
 		Short: "Print the audit database path",
 		Args:  cobra.NoArgs,
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Println(audit.DefaultDBPath())
+			fmt.Println(resolveDBPath(cmd))
 		},
 	}
 }

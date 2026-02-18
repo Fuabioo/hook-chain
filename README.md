@@ -2,12 +2,14 @@
 
 **Sequential Hook Executor for [Claude Code](https://docs.anthropic.com/en/docs/claude-code).**
 
-Claude Code hooks let you run a command before or after tool calls — but only *one* command per event. hook-chain removes that limitation: define an ordered list of hooks in YAML, and hook-chain runs them as a single pipeline, threading state through the chain with fold/reduce semantics.
+Claude Code hooks let you run commands before or after tool calls — but the execution order between hooks is undefined. hook-chain gives you control: define an ordered sequence of hooks in YAML, and hook-chain runs them as a single pipeline with deterministic ordering, threading accumulated state through the chain with fold/reduce semantics.
 
 ```
-Claude Code  ──stdin──▶  hook-chain  ──▶  hook-1  ──▶  hook-2  ──▶  hook-N  ──stdout──▶  Claude Code
-                           │                                            │
-                           └──── accumulated toolInput state ───────────┘
+                              ┌──deny/ask──▶ (short-circuit, stop chain)
+                              │
+Claude Code ──stdin──▶ hook-chain ──▶ hook-1 ──▶ hook-2 ──▶ hook-N ──stdout──▶ Claude Code
+                          │                                      │
+                          └──── accumulated toolInput state ─────┘
 ```
 
 ## Install
@@ -70,19 +72,25 @@ In your `.claude/settings.json`:
 hook-chain validate
 ```
 
+If no config file is found, hook-chain silently passes through all tool calls (no chains match, exit 0). Use `validate` to confirm your config is loaded.
+
 ## How the pipeline works
 
 hook-chain reads the [hook protocol](https://docs.anthropic.com/en/docs/claude-code/hooks) JSON from stdin, resolves the matching chain from config, and executes hooks sequentially. Each hook receives the full input on stdin and can:
 
-- **Pass through** — exit 0 with empty stdout. No effect; next hook runs.
+- **Pass through** — exit 0 with empty or whitespace-only stdout. No effect; next hook runs.
 - **Modify `toolInput`** — return JSON with `hookSpecificOutput.updatedInput`. The updates are shallow-merged into the accumulated state and forwarded to the next hook.
-- **Add context** — return `hookSpecificOutput.additionalContext`. All context strings are collected and joined in the final output.
-- **Deny** — exit 2, or return `permissionDecision: "deny"`. Immediately stops the chain and blocks the tool call.
-- **Escalate** — return `permissionDecision: "ask"`. Immediately stops the chain and prompts the user.
+- **Add context** — return `hookSpecificOutput.additionalContext`. All context strings are collected and joined with newlines in the final output.
+- **Deny** — exit 2, or return `permissionDecision: "deny"`. Immediately stops the chain and blocks the tool call (exit code 2).
+- **Escalate** — return `permissionDecision: "ask"`. Immediately stops the chain and prompts the user (exit code 0).
 
 When all hooks pass, hook-chain emits the accumulated output (merged `updatedInput` + combined `additionalContext`) back to Claude Code. If nothing changed, it exits silently — a clean passthrough.
 
+**Note:** The hook protocol fields `continue`, `suppressOutput`, and `systemMessage` on individual hook outputs are **not forwarded** through the chain. hook-chain builds its own final output from `hookSpecificOutput` fields only.
+
 ### Exit code semantics
+
+These are the exit codes of individual hooks within a chain:
 
 | Exit code | Meaning |
 |-----------|---------|
@@ -90,9 +98,11 @@ When all hooks pass, hook-chain emits the accumulated output (merged `updatedInp
 | 2 | **Deny.** Always blocks the tool call, regardless of `on_error`. |
 | Any other | Error. Behavior depends on the hook's `on_error` policy. |
 
+hook-chain's own exit code to Claude Code: 0 for allow/ask, 2 for deny.
+
 ### Error policies
 
-Each hook can set `on_error` to control what happens on non-zero exits (other than 2) or invalid output:
+Each hook can set `on_error` to control what happens on non-zero exits (other than 2), runner-level failures (command not found, timeout), or invalid JSON output:
 
 - **`deny`** (default) — fail closed. The chain stops and the tool call is blocked.
 - **`skip`** — fail open. The broken hook is skipped and the chain continues.
@@ -101,9 +111,11 @@ Each hook can set `on_error` to control what happens on non-zero exits (other th
 
 Config file search order:
 
-1. `$HOOK_CHAIN_CONFIG` (explicit path)
+1. `$HOOK_CHAIN_CONFIG` (explicit path — **hard error** if set but file does not exist)
 2. `$XDG_CONFIG_HOME/hook-chain/config.yaml`
 3. `~/.config/hook-chain/config.yaml`
+
+If none is found, hook-chain runs with an empty config (all tool calls pass through).
 
 ### Schema
 
@@ -120,7 +132,7 @@ chains:
         on_error: deny          # "deny" (default) or "skip"
 
 audit:
-  disabled: false              # set true to disable audit logging
+  disabled: false              # set true to disable audit logging (also: HOOK_CHAIN_AUDIT=0)
   db_path: /custom/audit.db    # override default DB location
   retention: 30d               # auto-rotation retention (default: 7d)
 ```
@@ -129,17 +141,19 @@ Chain resolution uses **first match**: the first chain entry where `event` match
 
 ## Audit log
 
-Every chain execution is recorded to a local SQLite database. Audit is **enabled by default** and runs fail-open — if the database can't be opened, the pipeline runs normally without auditing.
+Every chain execution is recorded to a local SQLite database. Audit is **enabled by default** and runs fail-open — if the database can't be opened, the pipeline runs normally without auditing. Audit can be disabled via `HOOK_CHAIN_AUDIT=0` or `audit.disabled: true` in config.
 
-Old entries are automatically archived to compressed zip files and pruned based on the configured retention period (default: 7 days). Rotation runs at most once per hour.
+Old entries are automatically archived to compressed zip files and pruned (including per-hook results) based on the configured retention period (default: 7 days). Rotation runs at most once per hour.
 
 ### Querying the audit log
 
+All `audit` subcommands accept `--db <path>` to override the database location.
+
 ```bash
-# Recent executions
+# Recent executions (default: last 10)
 hook-chain audit tail
 
-# List with filters
+# List with filters (default: 20 entries)
 hook-chain audit list --event PreToolUse --outcome deny --limit 50
 
 # Full details of a specific chain execution (including per-hook results)
@@ -151,13 +165,13 @@ hook-chain audit stats
 # All commands support --json for machine-readable output
 hook-chain audit list --json
 
-# Manual pruning
+# Manual pruning (--older-than is required)
 hook-chain audit prune --older-than 30d
 
 # View archived entries
 hook-chain audit archives
 
-# Print the database path
+# Print the resolved database path
 hook-chain audit db-path
 ```
 
@@ -174,9 +188,9 @@ hook-chain audit db-path
 
 | Variable | Purpose |
 |----------|---------|
-| `HOOK_CHAIN_CONFIG` | Explicit config file path |
+| `HOOK_CHAIN_CONFIG` | Explicit config file path (hard error if file missing) |
 | `HOOK_CHAIN_DEBUG=1` | Enable debug logging to stderr |
-| `HOOK_CHAIN_AUDIT=0` | Disable audit logging entirely |
+| `HOOK_CHAIN_AUDIT=0` | Disable audit logging entirely (also: `audit.disabled` in config) |
 | `HOOK_CHAIN_AUDIT_DB` | Override audit database path |
 
 ## CLI reference
@@ -185,13 +199,14 @@ hook-chain audit db-path
 hook-chain                Run the pipeline (reads hook protocol JSON from stdin)
 hook-chain validate       Validate config and check that hook commands exist on PATH
 hook-chain version        Print version and commit info
-hook-chain audit list     List chain executions (--limit, --offset, --event, --outcome, --json)
+hook-chain audit          All subcommands accept --db <path> to override the database
+hook-chain audit list     List chain executions (--limit=20, --offset=0, --event, --outcome, --json)
 hook-chain audit show     Show full details of a chain execution (--json)
-hook-chain audit tail     Show last N executions (--n, --json)
+hook-chain audit tail     Show last N executions (--n=10, --json)
 hook-chain audit stats    Aggregate statistics (--json)
-hook-chain audit prune    Delete entries older than a duration (--older-than)
+hook-chain audit prune    Delete entries older than a duration (--older-than, required)
 hook-chain audit archives List rotated archive files (--json)
-hook-chain audit db-path  Print the audit database path
+hook-chain audit db-path  Print the resolved audit database path
 ```
 
 ## Architecture
@@ -222,14 +237,16 @@ Requires: Go 1.26+, Docker, [just](https://github.com/casey/just).
 
 ```bash
 just build          # Build binary to bin/hook-chain
+just install        # Install to GOPATH/bin
 just test           # Run tests in Docker (mandatory — never on host)
 just test-verbose   # Verbose test output
 just test-coverage  # Coverage report
 just lint           # golangci-lint
 just vulncheck      # govulncheck
 just snapshot       # GoReleaser snapshot build
+just clean          # Remove build artifacts
 ```
 
 ## License
 
-MIT
+[MIT](LICENSE)
