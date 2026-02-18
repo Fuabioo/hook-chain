@@ -5,7 +5,6 @@ project_name: hook-chain
 release:
   draft: false
   prerelease: auto
-  mode: replace
   make_latest: true
   name_template: "v{{ .Version }}"
   header: |
@@ -69,43 +68,38 @@ snapshot:
 
 changelog:
   use: github
-  format: "{{ .SHA }}: {{ .Message }} (@{{ .AuthorUsername }})"
+  format: "{{ .SHA }}: {{ .Message }}{{ if .Logins }} ({{ .Logins | englishJoin }}){{ end }}"
   sort: asc
   filters:
     exclude:
       - "skip ci"
       - "skip-ci"
-      - "^docs:"
       - "^test:"
+      - "^test\\("
   groups:
     - title: "Features"
-      regexp: "(?i).*(feat|add|implement|create|initial|new).*"
+      regexp: '^.*?feat(\(.+\))??!?:.+$'
       order: 0
     - title: "Bug fixes"
-      regexp: "(?i).*(fix|resolve|correct|patch|bug).*"
+      regexp: '^.*?(fix|correct|patch)(\(.+\))??!?:.+$'
       order: 1
     - title: "Documentation"
-      regexp: "(?i).*(docs|documentation|readme).*"
+      regexp: '^.*?docs?(\(.+\))??!?:.+$'
       order: 2
     - title: "Improvements"
-      regexp: "(?i).*(improve|enhance|optimize|update|upgrade).*"
+      regexp: '^.*?(improve|enhance|optimize|refactor|perf)(\(.+\))??!?:.+$'
       order: 3
     - title: "Cleanup"
-      regexp: "(?i).*(cleanup|clean|remove|delete|refactor).*"
+      regexp: '^.*?(cleanup|chore|ci|build)(\(.+\))??!?:.+$'
       order: 4
     - title: "Others"
       order: 999
 
-brews:
+homebrew_casks:
   - repository:
       owner: Fuabioo
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    directory: Formula
     homepage: "https://github.com/Fuabioo/hook-chain"
     description: "Sequential Hook Executor — chain multiple hooks for Claude Code"
     license: "MIT"
-    install: |
-      bin.install "hook-chain"
-    test: |
-      system "#{bin}/hook-chain", "version"
