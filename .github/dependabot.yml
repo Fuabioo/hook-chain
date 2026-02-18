@@ -1,0 +1,30 @@
+# Dependabot configuration (UF-011)
+# Automated dependency updates to catch vulnerabilities early.
+# Motivated by the govulncheck incident during v0.1.0 setup
+# where Go 1.24.0 stdlib vulnerabilities were discovered.
+version: 2
+
+updates:
+  # Go modules
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    target-branch: main
+    open-pull-requests-limit: 5
+
+  # GitHub Actions
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    target-branch: main
+    open-pull-requests-limit: 5
+
+  # Docker (Dockerfile.test)
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    target-branch: main
+    open-pull-requests-limit: 5
