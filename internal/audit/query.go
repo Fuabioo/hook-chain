@@ -40,7 +40,7 @@ func ListChains(db *sql.DB, limit, offset int, filterEvent, filterOutcome string
 	if err != nil {
 		return nil, fmt.Errorf("audit: list chains: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var chains []ChainExecution
 	for rows.Next() {
@@ -92,7 +92,7 @@ func GetChain(db *sql.DB, id int64) (*ChainExecution, error) {
 	if err != nil {
 		return nil, fmt.Errorf("audit: get hook results for chain %d: %w", id, err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
 		var h HookResult
@@ -208,7 +208,7 @@ func Stats(db *sql.DB) (*AuditStats, error) {
 	if err != nil {
 		return nil, fmt.Errorf("audit: stats by outcome: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
 		var outcome string

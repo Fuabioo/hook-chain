@@ -38,11 +38,11 @@ func openAuditDBReadOnly(cmd *cobra.Command) (*sql.DB, error) {
 		return nil, fmt.Errorf("open audit db %q: %w", dbPath, err)
 	}
 	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("set busy_timeout on audit db %q: %w", dbPath, err)
 	}
 	if err := db.Ping(); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("connect audit db %q: %w", dbPath, err)
 	}
 	return db, nil
@@ -56,7 +56,7 @@ func openAuditDBWrite(cmd *cobra.Command) (*sql.DB, func(), error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("open audit db: %w", err)
 	}
-	return a.DB(), func() { a.Close() }, nil
+	return a.DB(), func() { _ = a.Close() }, nil
 }
 
 func newAuditCmd() *cobra.Command {
@@ -97,7 +97,7 @@ func runAuditList(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	limit, err := cmd.Flags().GetInt("limit")
 	if err != nil {
@@ -148,7 +148,7 @@ func runAuditShow(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	id, err := strconv.ParseInt(args[0], 10, 64)
 	if err != nil {
@@ -185,13 +185,13 @@ func runAuditShow(cmd *cobra.Command, args []string) error {
 	if len(chain.Hooks) > 0 {
 		fmt.Printf("\n  Hook Results:\n")
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "  IDX\tNAME\tEXIT\tOUTCOME\tDURATION\tSTDERR")
+		_, _ = fmt.Fprintln(w, "  IDX\tNAME\tEXIT\tOUTCOME\tDURATION\tSTDERR")
 		for _, h := range chain.Hooks {
 			stderr := h.Stderr
 			if len(stderr) > 60 {
 				stderr = stderr[:57] + "..."
 			}
-			fmt.Fprintf(w, "  %d\t%s\t%d\t%s\t%dms\t%s\n",
+			_, _ = fmt.Fprintf(w, "  %d\t%s\t%d\t%s\t%dms\t%s\n",
 				h.HookIndex, h.HookName, h.ExitCode, h.Outcome, h.DurationMs, stderr)
 		}
 		if err := w.Flush(); err != nil {
@@ -219,7 +219,7 @@ func runAuditTail(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	n, err := cmd.Flags().GetInt("n")
 	if err != nil {
@@ -298,7 +298,7 @@ func runAuditStats(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	asJSON, err := cmd.Flags().GetBool("json")
 	if err != nil {
@@ -378,9 +378,9 @@ func runAuditArchives(cmd *cobra.Command, _ []string) error {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tSIZE\tDATE")
+	_, _ = fmt.Fprintln(w, "NAME\tSIZE\tDATE")
 	for _, a := range archives {
-		fmt.Fprintf(w, "%s\t%s\t%s\n",
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n",
 			a.Name,
 			formatSize(a.Size),
 			a.ModTime.Format(time.RFC3339),
@@ -413,7 +413,7 @@ func formatSize(bytes int64) string {
 // to stderr showing how to query full untruncated reasons via sqlite3.
 func printChainTable(chains []audit.ChainExecution, dbPath string) {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tTIMESTAMP\tEVENT\tTOOL\tDETAIL\tHOOKS\tOUTCOME\tREASON\tDURATION")
+	_, _ = fmt.Fprintln(w, "ID\tTIMESTAMP\tEVENT\tTOOL\tDETAIL\tHOOKS\tOUTCOME\tREASON\tDURATION")
 
 	hasReasonedNonAllow := false
 	for _, c := range chains {
@@ -429,7 +429,7 @@ func printChainTable(chains []audit.ChainExecution, dbPath string) {
 		if len(reason) > 40 {
 			reason = reason[:37] + "..."
 		}
-		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%dms\n",
+		_, _ = fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%dms\n",
 			c.ID,
 			c.Timestamp.Format(time.RFC3339),
 			c.EventName,

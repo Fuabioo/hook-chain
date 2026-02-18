@@ -202,7 +202,7 @@ func TestArchiveContents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open zip: %v", err)
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 
 	if len(r.File) != 1 {
 		t.Fatalf("expected 1 file in zip, got %d", len(r.File))
@@ -215,7 +215,7 @@ func TestArchiveContents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open audit.json: %v", err)
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 
 	var entries []ChainExecution
 	if err := json.NewDecoder(rc).Decode(&entries); err != nil {

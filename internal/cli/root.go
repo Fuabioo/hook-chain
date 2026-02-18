@@ -127,7 +127,7 @@ func runRoot(cmd *cobra.Command, _ []string) error {
 		} else {
 			sqliteAuditor = a
 			auditor = a
-			defer a.Close()
+			defer func() { _ = a.Close() }()
 		}
 	}
 
@@ -187,7 +187,7 @@ func writeDenyJSON(reason string) {
 		// Last resort: hardcoded JSON.
 		data = []byte(`{"hookSpecificOutput":{"permissionDecision":"deny","permissionDecisionReason":"hook-chain: internal error"}}`)
 	}
-	os.Stdout.Write(data)
+	_, _ = os.Stdout.Write(data)
 }
 
 // resolveRetention returns the audit retention duration from config, defaulting to 7 days.
